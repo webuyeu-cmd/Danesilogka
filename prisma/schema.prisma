@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Leady / potencjalni klienci
+model Lead {
+  id          String   @id @default(cuid())
+  name        String   // nazwa firmy
+  contact     String   // osoba kontaktowa
+  email       String?
+  phone       String?
+  source      String   @default("website") // website, facebook, linkedin, referral
+  status      String   @default("new") // new, called, qualified, proposal, won, lost
+  notes       String?
+  industry    String?  // branża
+  painPoints  String?  // problemy do rozwiązania
+  callDate    DateTime? // data darmowej konsultacji
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  projects    Project[]
+}
+
+// Projekty / wdrożenia
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id])
+  package     String   @default("diagnosis") // diagnosis, quick_win, full
+  status      String   @default("pending") // pending, in_progress, review, completed, cancelled
+  price       Float?   // cena w PLN
+  startDate   DateTime?
+  endDate     DateTime?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+}
+
+// Zadania w projekcie
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status      String   @default("todo") // todo, in_progress, done
+  priority    String   @default("medium") // low, medium, high
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Case Studies
+model CaseStudy {
+  id          String   @id @default(cuid())
+  title       String
+  client      String   // nazwa klienta (może być anonimowa)
+  industry    String?
+  problem     String   // opis problemu
+  solution    String   // co zrobiłeś
+  result      String   // efekt (np. "50% mniej czasu na obsługę")
+  tools       String?  // użyte narzędzia (Botpress, GPT, etc.)
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
