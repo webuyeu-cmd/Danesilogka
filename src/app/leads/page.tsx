@@ -26,7 +26,7 @@ const statusOptions = [
   { value: "lost", label: "Przegrany", color: "bg-red-100 text-red-800" },
 ];
 
-const sourceOptions = ["website", "facebook", "linkedin", "referral"];
+const sourceOptions = ["website", "facebook", "linkedin", "referral", "calendly"];
 
 const emptyForm = {
   name: "", contact: "", email: "", phone: "", source: "website",
@@ -39,10 +39,34 @@ export default function LeadsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [filter, setFilter] = useState("all");
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/leads").then((r) => r.json()).then(setLeads);
   }, []);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/cron/sync-calendar", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncResult(`Zsynchronizowano: ${data.synced} nowych, ${data.skipped} pominiętych`);
+        if (data.synced > 0) {
+          const updated = await fetch("/api/leads").then((r) => r.json());
+          setLeads(updated);
+        }
+      } else {
+        setSyncResult(`Błąd: ${data.error}`);
+      }
+    } catch {
+      setSyncResult("Błąd połączenia z Google Calendar");
+    }
+    setSyncing(false);
+    setTimeout(() => setSyncResult(null), 5000);
+  }
 
   const filteredLeads = filter === "all" ? leads : leads.filter((l) => l.status === filter);
 
@@ -94,13 +118,32 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Leady</h1>
           <p className="text-gray-500 mt-1">Pipeline sprzedażowy</p>
         </div>
-        <button
-          onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm); }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-        >
-          + Nowy lead
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="bg-white text-gray-700 border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 flex items-center gap-2"
+          >
+            <svg className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {syncing ? "Syncuję..." : "Sync z kalendarza"}
+          </button>
+          <button
+            onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm); }}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            + Nowy lead
+          </button>
+        </div>
       </div>
+
+      {/* Sync result */}
+      {syncResult && (
+        <div className={`mb-4 px-4 py-2.5 rounded-lg text-sm ${syncResult.startsWith("Błąd") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+          {syncResult}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex gap-2 mb-6 flex-wrap">
@@ -219,7 +262,16 @@ export default function LeadsPage() {
                     <p className="text-sm text-gray-900">{lead.contact}</p>
                     <p className="text-xs text-gray-400">{lead.email}</p>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{lead.source}</td>
+                  <td className="px-4 py-3 text-sm">
+                    {lead.source === "calendly" ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        Calendly
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">{lead.source}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm text-gray-600">{lead.industry || "—"}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusOpt?.color || "bg-gray-100"}`}>
