@@ -22,7 +22,17 @@ export async function POST(request: NextRequest) {
       startDate: body.startDate ? new Date(body.startDate) : null,
       endDate: body.endDate ? new Date(body.endDate) : null,
       notes: body.notes,
+      ...(Array.isArray(body.tasks) && body.tasks.length > 0 && {
+        tasks: {
+          create: body.tasks.map((t: { title: string; priority?: string }) => ({
+            title: t.title,
+            priority: t.priority || "medium",
+            status: "todo",
+          })),
+        },
+      }),
     },
+    include: { tasks: true },
   });
   return NextResponse.json(project, { status: 201 });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PROJECT_TEMPLATES, PROJECT_STATUSES, PROJECT_PACKAGES, TASK_PRIORITIES } from "@/lib/constants";
 
 interface Task {
   id: string;
@@ -30,23 +31,10 @@ interface Lead {
   name: string;
 }
 
-const statusOptions = [
-  { value: "pending", label: "Oczekuje", color: "bg-gray-100 text-gray-800" },
-  { value: "in_progress", label: "W trakcie", color: "bg-blue-100 text-blue-800" },
-  { value: "review", label: "Review", color: "bg-yellow-100 text-yellow-800" },
-  { value: "completed", label: "Ukończony", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Anulowany", color: "bg-red-100 text-red-800" },
-];
-
-const packageOptions = [
-  { value: "diagnosis", label: "Diagnoza AI (299-999 zł)", color: "bg-purple-100 text-purple-800" },
-  { value: "quick_win", label: "Szybkie wdrożenie (1-3k zł)", color: "bg-blue-100 text-blue-800" },
-  { value: "full", label: "Pełne wdrożenie (5-20k zł)", color: "bg-green-100 text-green-800" },
-];
-
 const emptyForm = {
   name: "", description: "", leadId: "", package: "diagnosis",
   status: "pending", price: "", startDate: "", endDate: "", notes: "",
+  templateId: "blank",
 };
 
 export default function ProjectsPage() {
@@ -56,16 +44,38 @@ export default function ProjectsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch("/api/projects").then((r) => r.json()).then(setProjects);
     fetch("/api/leads").then((r) => r.json()).then(setLeads);
   }, []);
 
+  function applyTemplate(templateId: string) {
+    const template = PROJECT_TEMPLATES.find((t) => t.id === templateId);
+    if (!template || template.id === "blank") {
+      setForm((f) => ({ ...f, templateId }));
+      return;
+    }
+    setForm((f) => ({
+      ...f,
+      templateId,
+      name: f.name || template.name,
+      description: template.description,
+      package: template.package,
+      price: template.suggestedPrice > 0 ? template.suggestedPrice.toString() : f.price,
+    }));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const method = editId ? "PUT" : "POST";
-    const body = editId ? { ...form, id: editId } : form;
+    const template = PROJECT_TEMPLATES.find((t) => t.id === form.templateId);
+    const body: Record<string, unknown> = editId ? { ...form, id: editId } : { ...form };
+    // Only include tasks when creating and using a template with tasks
+    if (!editId && template && template.tasks.length > 0) {
+      body.tasks = template.tasks;
+    }
     const res = await fetch("/api/projects", {
       method,
       headers: { "Content-Type": "application/json" },
@@ -86,6 +96,46 @@ export default function ProjectsPage() {
     setProjects(projects.filter((p) => p.id !== id));
   }
 
+  async function toggleTaskStatus(projectId: string, task: Task) {
+    const nextStatus = task.status === "done" ? "todo" : task.status === "todo" ? "in_progress" : "done";
+    await fetch("/api/tasks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: task.id, status: nextStatus }),
+    });
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === projectId
+          ? { ...p, tasks: p.tasks.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t)) }
+          : p
+      )
+    );
+  }
+
+  async function addTask(projectId: string) {
+    const title = newTaskTitle[projectId]?.trim();
+    if (!title) return;
+    const res = await fetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, projectId }),
+    });
+    if (res.ok) {
+      const task = await res.json();
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? { ...p, tasks: [...p.tasks, task] } : p))
+      );
+      setNewTaskTitle((prev) => ({ ...prev, [projectId]: "" }));
+    }
+  }
+
+  async function deleteTask(projectId: string, taskId: string) {
+    await fetch(`/api/tasks?id=${taskId}`, { method: "DELETE" });
+    setProjects((prev) =>
+      prev.map((p) => (p.id === projectId ? { ...p, tasks: p.tasks.filter((t) => t.id !== taskId) } : p))
+    );
+  }
+
   function startEdit(project: Project) {
     setEditId(project.id);
     setForm({
@@ -98,6 +148,7 @@ export default function ProjectsPage() {
       startDate: project.startDate ? project.startDate.slice(0, 10) : "",
       endDate: project.endDate ? project.endDate.slice(0, 10) : "",
       notes: project.notes || "",
+      templateId: "blank",
     });
     setShowForm(true);
   }
@@ -117,9 +168,8 @@ export default function ProjectsPage() {
         </button>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-6">
-        {packageOptions.map((pkg) => {
+        {PROJECT_PACKAGES.map((pkg) => {
           const count = projects.filter((p) => p.package === pkg.value).length;
           const revenue = projects
             .filter((p) => p.package === pkg.value)
@@ -134,12 +184,30 @@ export default function ProjectsPage() {
         })}
       </div>
 
-      {/* Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">{editId ? "Edytuj projekt" : "Nowy projekt"}</h2>
             <form onSubmit={handleSubmit} className="space-y-3">
+              {!editId && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <label className="block text-sm font-medium text-blue-900 mb-1">Szablon projektu</label>
+                  <select
+                    value={form.templateId}
+                    onChange={(e) => applyTemplate(e.target.value)}
+                    className="w-full border border-blue-300 bg-white rounded-lg px-3 py-2 text-sm"
+                  >
+                    {PROJECT_TEMPLATES.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  {form.templateId !== "blank" && (
+                    <p className="text-xs text-blue-700 mt-2">
+                      Szablon doda automatycznie {PROJECT_TEMPLATES.find((t) => t.id === form.templateId)?.tasks.length} zadań i uzupełni pakiet/cenę.
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nazwa projektu *</label>
                 <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
@@ -159,24 +227,30 @@ export default function ProjectsPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Pakiet</label>
                   <select value={form.package} onChange={(e) => setForm({ ...form, package: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    {packageOptions.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    {PROJECT_PACKAGES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                   <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    {PROJECT_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cena (zł)</label>
                   <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Start</label>
                   <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Koniec</label>
+                  <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                 </div>
               </div>
               <div>
@@ -196,11 +270,10 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {/* Projects List */}
       <div className="space-y-4">
         {projects.map((project) => {
-          const statusOpt = statusOptions.find((s) => s.value === project.status);
-          const pkgOpt = packageOptions.find((p) => p.value === project.package);
+          const statusOpt = PROJECT_STATUSES.find((s) => s.value === project.status);
+          const pkgOpt = PROJECT_PACKAGES.find((p) => p.value === project.package);
           const totalTasks = project.tasks.length;
           const doneTasks = project.tasks.filter((t) => t.status === "done").length;
           const isExpanded = expandedId === project.id;
@@ -241,19 +314,64 @@ export default function ProjectsPage() {
                   </div>
                 )}
               </div>
-              {isExpanded && project.tasks.length > 0 && (
-                <div className="border-t border-gray-100 p-5">
+              {isExpanded && (
+                <div className="border-t border-gray-100 p-5" onClick={(e) => e.stopPropagation()}>
                   <h4 className="text-sm font-medium text-gray-700 mb-3">Zadania</h4>
-                  <div className="space-y-2">
-                    {project.tasks.map((task) => (
-                      <div key={task.id} className="flex items-center gap-3">
-                        <div className={`w-2 h-2 rounded-full ${task.status === "done" ? "bg-green-500" : task.status === "in_progress" ? "bg-blue-500" : "bg-gray-300"}`} />
-                        <span className={`text-sm ${task.status === "done" ? "text-gray-400 line-through" : "text-gray-700"}`}>{task.title}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded ${task.priority === "high" ? "bg-red-50 text-red-600" : task.priority === "medium" ? "bg-yellow-50 text-yellow-600" : "bg-gray-50 text-gray-500"}`}>
-                          {task.priority}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="space-y-1.5">
+                    {project.tasks.map((task) => {
+                      const prioOpt = TASK_PRIORITIES.find((p) => p.value === task.priority);
+                      return (
+                        <div key={task.id} className="flex items-center gap-3 group hover:bg-gray-50 px-2 py-1.5 rounded">
+                          <button
+                            onClick={() => toggleTaskStatus(project.id, task)}
+                            className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                              task.status === "done"
+                                ? "bg-green-500 border-green-500"
+                                : task.status === "in_progress"
+                                ? "bg-blue-100 border-blue-500"
+                                : "border-gray-300 hover:border-blue-400"
+                            }`}
+                            title={task.status === "todo" ? "Kliknij: w trakcie" : task.status === "in_progress" ? "Kliknij: gotowe" : "Kliknij: do zrobienia"}
+                          >
+                            {task.status === "done" && (
+                              <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                            {task.status === "in_progress" && (
+                              <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                            )}
+                          </button>
+                          <span className={`text-sm flex-1 ${task.status === "done" ? "text-gray-400 line-through" : "text-gray-700"}`}>{task.title}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${prioOpt?.color || "bg-gray-50 text-gray-500"}`}>
+                            {prioOpt?.label || task.priority}
+                          </span>
+                          <button
+                            onClick={() => deleteTask(project.id, task.id)}
+                            className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+                          >
+                            Usuń
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="+ Dodaj zadanie..."
+                      value={newTaskTitle[project.id] || ""}
+                      onChange={(e) => setNewTaskTitle((prev) => ({ ...prev, [project.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTask(project.id); } }}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-blue-400 focus:outline-none"
+                    />
+                    <button
+                      onClick={() => addTask(project.id)}
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm"
+                    >
+                      Dodaj
+                    </button>
                   </div>
                 </div>
               )}

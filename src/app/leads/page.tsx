@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LEAD_STATUSES, LEAD_SOURCES } from "@/lib/constants";
+import { LeadKanban } from "@/components/lead-kanban";
 
 interface Lead {
   id: string;
@@ -17,21 +19,12 @@ interface Lead {
   createdAt: string;
 }
 
-const statusOptions = [
-  { value: "new", label: "Nowy", color: "bg-blue-100 text-blue-800" },
-  { value: "called", label: "Po rozmowie", color: "bg-yellow-100 text-yellow-800" },
-  { value: "qualified", label: "Kwalifikowany", color: "bg-purple-100 text-purple-800" },
-  { value: "proposal", label: "Oferta wysłana", color: "bg-orange-100 text-orange-800" },
-  { value: "won", label: "Wygrany", color: "bg-green-100 text-green-800" },
-  { value: "lost", label: "Przegrany", color: "bg-red-100 text-red-800" },
-];
-
-const sourceOptions = ["website", "facebook", "linkedin", "referral", "calendly"];
-
 const emptyForm = {
   name: "", contact: "", email: "", phone: "", source: "website",
   status: "new", industry: "", painPoints: "", callDate: "", notes: "",
 };
+
+type View = "kanban" | "table";
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -41,10 +34,19 @@ export default function LeadsPage() {
   const [filter, setFilter] = useState("all");
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [view, setView] = useState<View>("kanban");
 
   useEffect(() => {
     fetch("/api/leads").then((r) => r.json()).then(setLeads);
+    // persisted view preference
+    const saved = typeof window !== "undefined" ? localStorage.getItem("leads-view") : null;
+    if (saved === "kanban" || saved === "table") setView(saved);
   }, []);
+
+  function changeView(next: View) {
+    setView(next);
+    if (typeof window !== "undefined") localStorage.setItem("leads-view", next);
+  }
 
   async function handleSync() {
     setSyncing(true);
@@ -94,6 +96,22 @@ export default function LeadsPage() {
     setLeads(leads.filter((l) => l.id !== id));
   }
 
+  async function handleStatusChange(leadId: string, newStatus: string) {
+    const lead = leads.find((l) => l.id === leadId);
+    if (!lead) return;
+    // Optimistic update
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l)));
+    const res = await fetch("/api/leads", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...lead, status: newStatus }),
+    });
+    if (!res.ok) {
+      // revert on error
+      setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, status: lead.status } : l)));
+    }
+  }
+
   function startEdit(lead: Lead) {
     setEditId(lead.id);
     setForm({
@@ -113,12 +131,30 @@ export default function LeadsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Leady</h1>
           <p className="text-gray-500 mt-1">Pipeline sprzedażowy</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* View toggle */}
+          <div className="bg-gray-100 rounded-lg p-0.5 flex">
+            <button
+              onClick={() => changeView("kanban")}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${view === "kanban" ? "bg-white shadow-sm text-gray-900" : "text-gray-500"}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+              Kanban
+            </button>
+            <button
+              onClick={() => changeView("table")}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${view === "table" ? "bg-white shadow-sm text-gray-900" : "text-gray-500"}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              Tabela
+            </button>
+          </div>
+
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -138,38 +174,39 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* Sync result */}
       {syncResult && (
         <div className={`mb-4 px-4 py-2.5 rounded-lg text-sm ${syncResult.startsWith("Błąd") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
           {syncResult}
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-2 mb-6 flex-wrap">
-        <button
-          onClick={() => setFilter("all")}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === "all" ? "bg-gray-900 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"}`}
-        >
-          Wszystkie ({leads.length})
-        </button>
-        {statusOptions.map((s) => {
-          const count = leads.filter((l) => l.status === s.value).length;
-          return (
-            <button
-              key={s.value}
-              onClick={() => setFilter(s.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === s.value ? "bg-gray-900 text-white" : `${s.color} hover:opacity-80`}`}
-            >
-              {s.label} ({count})
-            </button>
-          );
-        })}
-      </div>
+      {/* Status filters — only in table view */}
+      {view === "table" && (
+        <div className="flex gap-2 mb-6 flex-wrap">
+          <button
+            onClick={() => setFilter("all")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === "all" ? "bg-gray-900 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"}`}
+          >
+            Wszystkie ({leads.length})
+          </button>
+          {LEAD_STATUSES.map((s) => {
+            const count = leads.filter((l) => l.status === s.value).length;
+            return (
+              <button
+                key={s.value}
+                onClick={() => setFilter(s.value)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === s.value ? "bg-gray-900 text-white" : `${s.color} hover:opacity-80`}`}
+              >
+                {s.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">{editId ? "Edytuj lead" : "Nowy lead"}</h2>
             <form onSubmit={handleSubmit} className="space-y-3">
@@ -197,13 +234,13 @@ export default function LeadsPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Źródło</label>
                   <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    {sourceOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                    {LEAD_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                   <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    {LEAD_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
                 <div>
@@ -223,74 +260,84 @@ export default function LeadsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notatki</label>
                 <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" rows={2} />
               </div>
-              <div className="flex gap-3 pt-2">
-                <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-                  {editId ? "Zapisz" : "Dodaj"}
-                </button>
-                <button type="button" onClick={() => { setShowForm(false); setEditId(null); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
-                  Anuluj
-                </button>
+              <div className="flex gap-3 pt-2 justify-between">
+                <div className="flex gap-3">
+                  <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+                    {editId ? "Zapisz" : "Dodaj"}
+                  </button>
+                  <button type="button" onClick={() => { setShowForm(false); setEditId(null); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
+                    Anuluj
+                  </button>
+                </div>
+                {editId && (
+                  <button type="button" onClick={() => { handleDelete(editId); setShowForm(false); setEditId(null); }} className="text-red-600 hover:text-red-800 px-4 py-2 text-sm font-medium">
+                    Usuń
+                  </button>
+                )}
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Leads Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Firma</th>
-              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Kontakt</th>
-              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Źródło</th>
-              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Branża</th>
-              <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Status</th>
-              <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Akcje</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {filteredLeads.map((lead) => {
-              const statusOpt = statusOptions.find((s) => s.value === lead.status);
-              return (
-                <tr key={lead.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-gray-900 text-sm">{lead.name}</p>
-                    {lead.painPoints && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{lead.painPoints}</p>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-sm text-gray-900">{lead.contact}</p>
-                    <p className="text-xs text-gray-400">{lead.email}</p>
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {lead.source === "calendly" ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                        Calendly
+      {view === "kanban" ? (
+        <LeadKanban leads={leads} onStatusChange={handleStatusChange} onEdit={startEdit} />
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Firma</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Kontakt</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Źródło</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Branża</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Status</th>
+                <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Akcje</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredLeads.map((lead) => {
+                const statusOpt = LEAD_STATUSES.find((s) => s.value === lead.status);
+                return (
+                  <tr key={lead.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-900 text-sm">{lead.name}</p>
+                      {lead.painPoints && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{lead.painPoints}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-sm text-gray-900">{lead.contact}</p>
+                      <p className="text-xs text-gray-400">{lead.email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {lead.source === "calendly" ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          Calendly
+                        </span>
+                      ) : (
+                        <span className="text-gray-600">{lead.source}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{lead.industry || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusOpt?.color || "bg-gray-100"}`}>
+                        {statusOpt?.label || lead.status}
                       </span>
-                    ) : (
-                      <span className="text-gray-600">{lead.source}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{lead.industry || "—"}</td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusOpt?.color || "bg-gray-100"}`}>
-                      {statusOpt?.label || lead.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={() => startEdit(lead)} className="text-blue-600 hover:text-blue-800 text-sm mr-3">Edytuj</button>
-                    <button onClick={() => handleDelete(lead.id)} className="text-red-500 hover:text-red-700 text-sm">Usuń</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {filteredLeads.length === 0 && (
-          <p className="text-center text-sm text-gray-400 py-8">Brak leadów</p>
-        )}
-      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button onClick={() => startEdit(lead)} className="text-blue-600 hover:text-blue-800 text-sm mr-3">Edytuj</button>
+                      <button onClick={() => handleDelete(lead.id)} className="text-red-500 hover:text-red-700 text-sm">Usuń</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {filteredLeads.length === 0 && (
+            <p className="text-center text-sm text-gray-400 py-8">Brak leadów</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
